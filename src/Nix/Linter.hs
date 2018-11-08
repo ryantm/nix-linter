@@ -5,9 +5,12 @@
 
 module Nix.Linter where
 
+import           Control.Arrow            (first, second)
 import           Control.Monad
+import           Control.Monad.Free       (Free (..))
 import           Data.Fix
 import           Data.Foldable            (fold)
+import           Data.List                (find)
 import           Data.List.NonEmpty       (NonEmpty (..))
 import           Data.Maybe
 import           Data.Set                 (member)
@@ -30,6 +33,20 @@ hasRef, noRef :: VarName -> NExprLoc -> Bool
 hasRef name t = member name $ freeVars t
 
 noRef = not ... hasRef
+
+getFreeVar :: NExprLoc -> VarName
+getFreeVar x = let
+    candidates = pack . ("freeVar" ++) . show <$> [1..]
+    -- We are guarranteed to find a good candidate, because candidates is
+    -- infinite and x is strict
+    Just var = find (not . (`member` freeVars x)) candidates
+  in var
+
+generatedPos :: SourcePos
+generatedPos = let z = mkPos 1 in SourcePos "<generated!>" z z
+
+generated :: SrcSpan
+generated = join SrcSpan generatedPos
 
 values :: [Binding r] -> [r]
 values = (f =<<)  where
@@ -156,16 +173,16 @@ checkLetInInheritRecset = \case
       (this, others) -> let
           names = simpleBoundNames this
           allNamesFree x = all (`noRef` x) names
-          othersFree = all allNamesFree (values others)
+          othersFree = all allNamesFree (values others) && allNamesFree usedIn
         in [LetInInheritRecset name | name <- names, plainInherits name set, othersFree]
     _ -> []
   _ -> []
 
 -- TODO: use standard (para?) morphism
+-- TODO: could use some more generality
 topNonLinear :: NExprLoc -> NExprLoc
 topNonLinear (Fix (NBinary_ _ NApp f x)) = topNonLinear x
 topNonLinear x                           = x
-
 
 
 checks :: [CheckBase]
